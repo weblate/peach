@@ -11,7 +11,7 @@ import time
 import unittest
 from contextlib import ExitStack, closing, contextmanager
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -68,6 +68,24 @@ class WebDataTests(unittest.TestCase):
         result = rm_web.dispatch_api_get(self.contract, '/api/facets', {
             **query, 'column_filters': '{"rating":["4"]}'})
         self.assertEqual(set(result['date_values']), {'2012-02-29'})
+
+    def test_catalog_uses_the_same_instant_for_legacy_added_dates_and_zoned_rows(self):
+        legacy = '2026-11-28 16:56:25'
+        instant = datetime.fromisoformat(legacy).astimezone(timezone.utc)
+        earlier = (instant - timedelta(minutes=1)).isoformat(timespec='seconds')
+        with self.contract.write_transaction() as connection:
+            connection.executemany("UPDATE asset SET first_seen=? WHERE id=?", [(legacy, 1), (earlier, 2)])
+        newest = q_items(self.contract, {'sort': 'new'})['items']
+        self.assertEqual([row['id'] for row in newest], [1, 2])
+        self.assertEqual(newest[0]['first_seen'], instant.strftime('%Y-%m-%dT%H:%M:%SZ'))
+        self.assertEqual(newest[1]['first_seen'], earlier)
+        timestamp = int(instant.timestamp())
+        selected = json.dumps({'new': {'range': {'min': timestamp, 'max': timestamp + 1}}})
+        self.assertEqual(q_items(self.contract, {'column_filters': selected})['total'], 1)
+        facets = rm_web.dispatch_api_get(self.contract, '/api/facets', {'column': 'new'})
+        self.assertEqual(set(facets['date_values']), {timestamp - 60, timestamp})
+        with self.contract.read_connection() as connection:
+            self.assertEqual(connection.execute('SELECT first_seen FROM asset WHERE id=1').fetchone()[0], legacy)
 
     def test_queue_facets_intersect_columns_and_count_each_row_once(self):
         from peach.table_filters import filter_rows

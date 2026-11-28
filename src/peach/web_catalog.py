@@ -118,14 +118,19 @@ def attach_cover_fields(contract: WebContract, item: dict) -> None:
         item['cover_version'] = contract.cover_version(key)
         item['poster_box'] = contract.poster_box(key)
 
+# 旧扫描保存服务器本地时间，在线入库和新版扫描已经含时区。投影沿用写入格式来分辨这两类值。
+_FIRST_SEEN_UTC = ("CASE WHEN a.first_seen GLOB '????-??-?? ??:??:??' "
+                   "THEN strftime('%Y-%m-%dT%H:%M:%SZ',a.first_seen,'utc') ELSE a.first_seen END")
+FIRST_SEEN_ORDER = f"julianday({_FIRST_SEEN_UTC})"
+
 #: 排序拆成「列 + 方向」两段：`{d}` 由方向填入。方向不进列键，`时长` 才能在同一枚
 #: 控件上翻转，而不是分裂成两个互斥选项，也不会有一个方向在界面上永远点不到。
 #: 每个方向都显式 `NULLS LAST`——升序时 SQLite 默认把 NULL 排在最前，
 #: 「时长最短」会先给出一整屏没有时长的条目。
 SORT_COLUMNS = {
     "name": "a.name COLLATE NOCASE {d} NULLS LAST, a.id {d}",
-    "new": "a.first_seen {d} NULLS LAST, a.id {d}",
-    "release": "a.release_date {d} NULLS LAST, a.first_seen {d} NULLS LAST, a.id {d}",
+    "new": FIRST_SEEN_ORDER + " {d} NULLS LAST, a.id {d}",
+    "release": "a.release_date {d} NULLS LAST, " + FIRST_SEEN_ORDER + " {d} NULLS LAST, a.id {d}",
     "size": "a.size {d} NULLS LAST, a.id {d}",
     "dur": "a.duration {d} NULLS LAST, a.id {d}",
     "played": "a.last_played {d} NULLS LAST, a.id {d}",
@@ -327,7 +332,7 @@ CATALOG_RANGE_COLUMNS = {
     "dur": ("number", "CASE WHEN a.duration>0 THEN a.duration END"),
     "plays": ("number", "COALESCE(a.play_count,0)"),
     "o": ("number", "COALESCE(a.o_count,0)"),
-    "new": ("timestamp", "unixepoch(a.first_seen)"),
+    "new": ("timestamp", f"unixepoch({_FIRST_SEEN_UTC})"),
     "played": ("timestamp", "NULLIF(CAST(a.last_played AS REAL),0)"),
     "release": ("date", "date(a.release_date)"),
 }
@@ -619,7 +624,8 @@ def q_items(contract: WebContract, args, *, playback_queue=False):
     sql = ("SELECT a.id,a.location,a.path,a.name,a.catalog_title,a.original_title,a.medium,"
            "a.creator,a.studio,a.code,a.release_date,a.size,"
            "a.duration,a.width,a.height,a.ctx_length,a.ctx_orient,a.snapshot_path,"
-           "a.play_count,a.first_seen,a.last_played,a.leave_ratio,a.feedback,a.disposal,a.disposal_reason,a.rating,a.o_count,"
+           f"a.play_count,{_FIRST_SEEN_UTC} AS first_seen,a.last_played,a.leave_ratio,a.feedback,"
+           "a.disposal,a.disposal_reason,a.rating,a.o_count,"
            "a.play_seconds,a.max_reached,a.seek_count,a.region,"
            f"{EFFECTIVE_REGION_SQL} AS effective_region,"
            "EXISTS(SELECT 1 FROM watch_queue w WHERE w.asset_id=a.id "

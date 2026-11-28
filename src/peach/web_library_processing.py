@@ -374,8 +374,8 @@ def _active_issue_assets(contract, ids):
     with contract.database.read_connection() as connection:
         for offset in range(0, len(ids), 900):
             batch = ids[offset:offset+900]
-            active.update((asset_id, (path, seen)) for asset_id, path, seen in connection.execute(
-                'SELECT id,path,last_seen FROM asset WHERE disposal IS NULL AND id IN ('
+            active.update((asset_id, (path, seen, code)) for asset_id, path, seen, code in connection.execute(
+                'SELECT id,path,last_seen,code FROM asset WHERE disposal IS NULL AND id IN ('
                 + ','.join('?' * len(batch)) + ')', batch))
     return active
 
@@ -415,7 +415,7 @@ def _media_seen_again(issue, asset, state):
     from .library_diagnostics import _local_access
     if not _local_access(issue):
         return False
-    path, seen = asset
+    path, seen, _ = asset
     # 路径只在登记新文件、改名或移动成功后改变。原路径回来则用更新过的扫描水位。
     if path and issue.get('path') and issue['path'] != path:
         return True
@@ -437,10 +437,27 @@ def _reachable_sources(contract, rows):
             if row['state'] == 'ok' and row['checked_at'] is not None}
 
 
-def _resolved_issue(row, active, reachable, state):
+def _verified_catalog_cover(contract, issue, code):
+    from .images import measure_image_file
+    from .jav_cover_fetch import CATALOG_UNFINISHED_CODE
+    from .library_processing import cover_settled, cover_verified
+    from .western_artwork import artwork_key
+
+    if issue.get('message_code') != 'errors.libraryProcessing.coverUnfetched':
+        return False
+    params = issue.get('message_params')
+    problem = params.get('problem') if isinstance(params, dict) else None
+    if not isinstance(problem, dict) or problem.get('code') != CATALOG_UNFINISHED_CODE:
+        return False
+    path = Path(contract.cover_root) / (artwork_key(issue['asset_id'], code) + '.jpg')
+    return cover_settled(path) or cover_verified(path, measure_image_file(path))
+
+
+def _resolved_issue(contract, row, active, reachable, state):
     asset_id = row.get('asset_id')
     if type(asset_id) is int:
-        return asset_id not in active or _media_seen_again(row, active[asset_id], state)
+        asset = active.get(asset_id)
+        return asset is None or _media_seen_again(row, asset, state) or _verified_catalog_cover(contract, row, asset[2])
     if row.get('message_code') in _ROOT_ISSUES:
         params = row.get('message_params')
         source = params.get('source') if isinstance(params, dict) else None
@@ -468,7 +485,7 @@ def _pending_issue_rows(contract, state):
         return None
     active = _active_issue_assets(contract, {row['asset_id'] for row in rows if type(row.get('asset_id')) is int})
     reachable = _reachable_sources(contract, rows)
-    return [row for row in rows if not _resolved_issue(row, active, reachable, state)]
+    return [row for row in rows if not _resolved_issue(contract, row, active, reachable, state)]
 
 
 def _project_pending_issues(contract, state):

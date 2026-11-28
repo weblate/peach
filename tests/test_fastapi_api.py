@@ -403,7 +403,9 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
             follow_state_root=self.root / 'state',
             entry_links_root=self.root / "state",
         )
-        self.app = create_app(self.settings)
+        self.secrets_root = self.root / "secrets"
+        with patch("peach.web_state.SECRETS_DIR", self.secrets_root):
+            self.app = create_app(self.settings)
         # 字节与时间表夹具不含可解码画面；编码判定由媒体域的真实样本覆盖。
         from peach.transcodes import _MediaProfile
         self.profile_patch = patch.object(
@@ -414,7 +416,6 @@ class FastApiContractTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.profile_patch.stop)
         # 凭据仓库落在临时目录：夹具不该读到这台机器上真实的 api_key，结论也不该
         # 因为某个 provider 在本机配没配过而变。要用凭据的用例自己往这里写一份。
-        self.secrets_root = self.root / "secrets"
         self.credentials = credential_store_for(self.secrets_root, shared_root=None)
         credentials_patch = patch("peach.web_follow._credential_store",
                                   return_value=self.credentials)

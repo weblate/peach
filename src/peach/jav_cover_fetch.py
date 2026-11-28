@@ -911,6 +911,9 @@ def _site_candidates(transport: HttpTransport, code: str, evidence: MetadataEvid
     return candidates
 
 
+CATALOG_UNFINISHED_CODE = 'errors.javCoverFetch.catalogUnfinished'
+
+
 def _unanswered_error(diagnostics: dict, *said) -> Exception:
     """没问成的那一趟交什么：没答复的全是冷却挡下的就交 `SourcePaused`，否则按 `said`（code 与参数）交 `Unavailable`。"""
     unanswered = sum(diagnostics.get(key, 0) for key in ('source_unanswered', 'unanswered', 'download_failed'))
@@ -969,7 +972,7 @@ def best_cover(transport: HttpTransport, code: str, delay: float, *,
                                             deadline=deadline, record=record)])
     if not asked:
         if diagnostics.get('source_unanswered'):
-            raise _unanswered_error(diagnostics, 'errors.javCoverFetch.catalogUnfinished')
+            raise _unanswered_error(diagnostics, CATALOG_UNFINISHED_CODE)
         raise NotFound(NO_CANDIDATES_CODE)
     measured = _measure(transport, asked, record, minimum_width=minimum_width,
                         delay=delay, deadline=deadline)

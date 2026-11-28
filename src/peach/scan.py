@@ -41,6 +41,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from functools import partial
 from itertools import chain
 from pathlib import Path, PureWindowsPath
@@ -90,6 +91,16 @@ _UPSERT = """INSERT INTO asset(location,path,name,medium,size,mtime,first_seen,l
              ON CONFLICT(location,path) DO UPDATE SET
                medium=excluded.medium, size=excluded.size, mtime=excluded.mtime, last_seen=excluded.last_seen,
                disposal=CASE WHEN asset.disposal='vanished' THEN NULL ELSE asset.disposal END"""
+
+
+def _scan_stamps(scan_time=None, first_seen=None):
+    """账本的入库时间记录实际时刻，扫描断点继续沿用原来的批次时间。"""
+    if not scan_time:
+        moment = datetime.now().astimezone()
+        scan_time = moment.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        moment = datetime.fromisoformat(scan_time).astimezone()
+    return scan_time, first_seen or moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class ScanTargetError(UserFacingError, ValueError):
@@ -430,7 +441,7 @@ def ingest_path(
     library_roots = tuple(chain.from_iterable(declared_roots.values()))
     if _sidecar_on_disk(name, directory, ledger_path=str(ledger_path), library_roots=library_roots):
         return IngestResult(location, str(ledger_path), True, stat.st_size, sidecar=True)
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    now, first_seen = _scan_stamps()
     mtime = time.strftime("%Y-%m-%d", time.localtime(stat.st_mtime))
     medium = medium_of(name)
     tracks = 0
@@ -460,7 +471,7 @@ def ingest_path(
         relocated = _relocate_ingested(connection, registered, location, ledger_path, here,
                                        declared_roots=declared_roots, mounts=mounts, windows=windows)
         inserted_ids = _upsert_records(connection, [(location, str(ledger_path), name, medium,
-                                     stat.st_size, mtime, now, now)], registered, conflicts)
+                                     stat.st_size, mtime, first_seen, now)], registered, conflicts)
         stored_path = registered[str(ledger_path).casefold()]
         if here is not None:
             tracks = _record_directory_subtitles(connection, location, ledger_dir, here, conflicts, now)[0]
@@ -824,7 +835,7 @@ def _scan_location(
         return completed
     ledger_root = PureWindowsPath(root)
     library_roots = tuple(chain.from_iterable(declared_roots.values()))
-    now = previous.get('scan_time') or time.strftime("%Y-%m-%d %H:%M:%S")
+    now, first_seen = _scan_stamps(previous.get('scan_time'), previous.get('scan_first_seen'))
     started = time.time()
     progress = _ScanProgress(progress)
     files = previous.get('files', 0)
@@ -842,7 +853,8 @@ def _scan_location(
                            if path_module.basename(value).casefold() in ARTWORK_DIRS}
         video_dirs.intersection_update(artwork_parents)
         timings.call('checkpoint_write', save_checkpoint, dict(
-            mapping=mapping, scan_time=now, timings=timings.snapshot(), pending=list(pending), files=files,
+            mapping=mapping, scan_time=now, scan_first_seen=first_seen,
+            timings=timings.snapshot(), pending=list(pending), files=files,
             total_bytes=total, sidecars=skipped, subtitles=tracks,
             orphan_subtitles=orphans, new_ids=sorted(discovered), relocated_ids=sorted(relocator.moved),
             video_dirs=sorted(video_dirs),
@@ -898,7 +910,7 @@ def _scan_location(
                 mtime = time.strftime("%Y-%m-%d", time.localtime(stat.st_mtime))
                 here[name] = (stat.st_size, mtime)
                 batch.append((location, ledger_path, name, medium_of(name),
-                              stat.st_size, mtime, now, now))
+                              stat.st_size, mtime, first_seen, now))
                 files += 1
                 total += stat.st_size
                 timings.call('progress_update', progress, files, total)
