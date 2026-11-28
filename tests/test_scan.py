@@ -345,6 +345,8 @@ class PosixShapeTests(_ScanCase):
                        mounts={'local': (self.media,)}, windows=False)
         with self.assertRaises(InterruptedError):
             self._scan('R:\\media', save_checkpoint=save, **options)
+        first_seen = saved['scan_first_seen']
+        self.assertTrue(first_seen.endswith('Z'))
         visited = []
         scandir = os.scandir
         def walk(path):
@@ -356,6 +358,8 @@ class PosixShapeTests(_ScanCase):
         self.assertEqual((result.files, result.total_bytes, result.subtitles), (4, 22, 1))
         self.assertEqual(len(result.new_ids), 4)
         self.assertEqual(len(self._paths()), 4)
+        with closing(sqlite3.connect(self.db)) as connection:
+            self.assertEqual(connection.execute('SELECT DISTINCT first_seen FROM asset').fetchall(), [(first_seen,)])
 
     def test_finished_root_checkpoint_does_not_enumerate_the_tree(self):
         saved = []

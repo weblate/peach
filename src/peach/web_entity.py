@@ -37,6 +37,7 @@ from .social_links import ARCHIVE_HOSTS, is_archive
 from .user_messages import UserValueError
 from .media_sources import cost_for
 from .web_catalog import (
+    FIRST_SEEN_ORDER,
     JAV_ASSET_PREDICATE,
     VISIBLE_CATALOG_ASSET,
     attach_avatar_availability,
@@ -531,7 +532,7 @@ def q_entity_latest(contract, args) -> dict:
         rows = connection.execute(
             "SELECT entity_id,id,code,release_date FROM (SELECT ae.entity_id entity_id,a.id id,"
             "COALESCE(a.code,'') code,a.release_date release_date,ROW_NUMBER() OVER ("
-            "PARTITION BY ae.entity_id ORDER BY a.release_date DESC,a.first_seen DESC,a.id DESC) rn"
+            f"PARTITION BY ae.entity_id ORDER BY a.release_date DESC,{FIRST_SEEN_ORDER} DESC,a.id DESC) rn"
             " FROM asset_entity ae JOIN asset a ON a.id=ae.asset_id"
             f" WHERE ae.entity_id IN ({marks}) AND a.release_date IS NOT NULL AND a.release_date<>''"
             " AND " + VISIBLE_CATALOG_ASSET + ") WHERE rn=1", ids).fetchall()
@@ -1217,7 +1218,7 @@ def _suggest_faces(contract: WebContract, connection, kind: str, items: list[dic
             "PARTITION BY entity_id ORDER BY solo,release_date DESC NULLS LAST,"
             "first_seen DESC,id DESC) rn FROM (SELECT ae.entity_id entity_id,a.id id,"
             "COALESCE(a.code,'') code,a.snapshot_path snapshot_path," + solo + " solo,"
-            "a.release_date release_date,a.first_seen first_seen,"
+            f"a.release_date release_date,{FIRST_SEEN_ORDER} first_seen,"
             "ROW_NUMBER() OVER (PARTITION BY ae.entity_id," + SUGGEST_WORK_KEY +
             " ORDER BY " + SUGGEST_WORK_COPY_ORDER + ") copy"
             " FROM asset_entity ae JOIN asset a ON a.id=ae.asset_id"
