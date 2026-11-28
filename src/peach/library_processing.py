@@ -512,19 +512,34 @@ def _stage_problem(source, error):
                   {'source': source_name(source), 'problem': describe_failure(error)})
 
 
-def _kept_cover_suffices(kept, problems):
+def cover_verified(path, size):
+    """来源边车须记录两个不同的印证来源，且本机仍有可用尺寸的图片。"""
+    if size is None or max(size) < MIN_WIDTH:
+        return False
+    try:
+        evidence = json.loads(Path(path).with_suffix('.scraping.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return False
+    sources = evidence.get('verified_by') if isinstance(evidence, dict) else None
+    return isinstance(sources, list) and len({source for source in sources if isinstance(source, str) and source}) >= 2
+
+
+def _kept_cover_suffices(target, kept, problems):
     """本机已有能用的封面、没答上的来源又全是被拦着的：这一趟按「没换到更大的」收。
 
     本机那张宽到 `MIN_WIDTH` 时，这一趟只是在找更大的那张。没答上的来源全是被拦着的（出口被 CloudFront
     挡掉的 403、限流，来源层已经让它冷却，一时半会好不了）就一周内不为升级重问整条链，不记问题项，原因留
     一条告知项（#144）。连接抖动、超时这类说不准下一趟就好的照旧记成未取得；本机没有封面或只有小图的也照旧。
     本趟预算到顶也算「被拦着」（`source_paused`），可它下一趟就重新计数，不能因此一周不问。
-    `problems` 是 `(phrase, 是否冷却)` 列表。
+    现有封面已有图源印证时，官方目录未完成也只影响高清升级。预算耗尽与其他错误仍由原重试处理。
     """
+    from .jav_cover_fetch import CATALOG_UNFINISHED_CODE
     from .scraping_access import BUDGET_SPENT
+    if kept is None or max(kept) < MIN_WIDTH or not problems:
+        return False
     spent = set(BUDGET_SPENT.values())
-    return (kept is not None and max(kept) >= MIN_WIDTH and bool(problems)
-            and all(paused and said.get('code') not in spent for said, paused in problems))
+    retry_reasons = {said.get('code') for said, paused in problems if not paused or said.get('code') in spent}
+    return not retry_reasons or (retry_reasons == {CATALOG_UNFINISHED_CODE} and cover_verified(target, kept))
 
 
 class _BudgetedPages:
@@ -985,7 +1000,7 @@ class LibraryMetadataProvider:
                 pass
             except (Unavailable, SourcePaused) as error:
                 problems.append((describe_failure(error), source_paused(error)))
-        kept_usable = _kept_cover_suffices(kept, problems)
+        kept_usable = _kept_cover_suffices(target, kept, problems)
         if chosen is None:
             if kept_usable:
                 raise CoverKept('errors.libraryProcessing.coverNotImproved', {'width': kept[0], 'height': kept[1]})

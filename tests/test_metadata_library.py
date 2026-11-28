@@ -2291,6 +2291,44 @@ class LibraryNfoTests(unittest.TestCase):
         with Image.open(covers / 'ABF-002.jpg') as kept:
             self.assertEqual(kept.size, (800, 539))
 
+    def test_an_unfinished_official_catalog_keeps_a_corroborated_cover(self):
+        from peach.jav_cover_fetch import CATALOG_UNFINISHED_CODE, Unavailable
+        from peach.library_processing import CoverKept, LibraryMetadataProvider
+
+        provider = LibraryMetadataProvider.__new__(LibraryMetadataProvider)
+        provider.transport = Mock()
+        provider._official_candidates = Mock(return_value=())
+        provider.community = Mock(return_value=[])
+        provider.community_problems = Mock(return_value=[])
+        covers = self.root / 'covers'
+        covers.mkdir()
+        cover = covers / 'ABF-002.jpg'
+        evidence = cover.with_suffix('.scraping.json')
+        Image.new('RGB', (1121, 758), 'gray').save(cover)
+        original = cover.read_bytes()
+        source_url = 'https://pics.dmm.co.jp/mono/movie/adult/118abf002/118abf002pl.jpg'
+        with patch('peach.jav_cover_fetch.best_cover', side_effect=Unavailable(CATALOG_UNFINISHED_CODE)) as official, \
+                patch('peach.community_catalog.verified_cover',
+                      side_effect=NotFound('errors.libraryProcessing.communitySaidNo')):
+            evidence.write_text(json.dumps({'source_url': source_url, 'verified_by': ['dmm', 'javdb']}), encoding='utf-8')
+            with self.assertRaises(CoverKept):
+                provider.cover('ABF-002', covers)
+            self.assertEqual(cover.read_bytes(), original)
+
+            official.side_effect = Unavailable(*relayed('timeout'))
+            with self.assertRaises(Unavailable):
+                provider.cover('ABF-002', covers)
+
+            official.side_effect = Unavailable(CATALOG_UNFINISHED_CODE)
+            evidence.write_text(json.dumps({'source_url': source_url, 'verified_by': ['dmm', 'dmm']}), encoding='utf-8')
+            with self.assertRaises(Unavailable):
+                provider.cover('ABF-002', covers)
+
+            cover.unlink()
+            evidence.write_text(json.dumps({'source_url': source_url, 'verified_by': ['dmm', 'javdb']}), encoding='utf-8')
+            with self.assertRaises(Unavailable):
+                provider.cover('ABF-002', covers)
+
     def test_a_verified_cover_replaces_a_wider_unverified_picture_of_something_else(self):
         """官方那一档按尺寸挑中的是正片截图：同页竖版商品图经 javdb 印证后，窄一点也换上。
 

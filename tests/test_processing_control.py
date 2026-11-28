@@ -614,6 +614,49 @@ class ProcessingControlTests(unittest.TestCase):
             self.assertEqual(q_library_processing_issues(contract, {'job_id': 'recovery'})['rows'], issues)
         self.assertEqual(log.read_text(encoding='utf-8'), original)
 
+    def test_corroborated_covers_drop_only_unfinished_catalog_retries(self):
+        from PIL import Image
+
+        from peach.jav_cover_fetch import CATALOG_UNFINISHED_CODE
+        from peach.library_processing import _save, issues_path, state_path
+        from peach.repository import LedgerDatabase
+        from peach.web_library_processing import q_library_processing, q_library_processing_issues
+        from peach.western_artwork import artwork_key
+
+        database_root = self.config.directory('database')
+        database_root.mkdir()
+        self.db = fresh_ledger(database_root)
+        self.seed(3)
+        database = LedgerDatabase(self.db)
+        with database.read_connection() as connection:
+            code = connection.execute('SELECT code FROM asset WHERE id=1').fetchone()[0]
+        covers = self.root / 'covers'
+        covers.mkdir()
+        cover = covers / (artwork_key(1, code) + '.jpg')
+        Image.new('RGB', (1121, 758), 'gray').save(cover)
+        cover.with_suffix('.scraping.json').write_text(json.dumps({
+            'source_url': 'https://pics.dmm.co.jp/cover.jpg', 'verified_by': ['dmm', 'javdb'],
+        }), encoding='utf-8')
+        job = Mock()
+        job.snapshot.return_value = None
+        contract = SimpleNamespace(db_path=self.db, database=database, library_processing_job=job, cover_root=covers)
+
+        rows = [{'asset_id': asset_id, 'retryable': True, 'message_code': 'errors.libraryProcessing.coverUnfetched',
+                 'message_params': {'problem': {'code': problem}}} for asset_id, problem in (
+                     (1, CATALOG_UNFINISHED_CODE), (2, CATALOG_UNFINISHED_CODE), (3, 'errors.scraping.timeout'))]
+        log = issues_path(self.config, 'cover-recovery')
+        log.parent.mkdir(parents=True, exist_ok=True)
+        original = ''.join(json.dumps(row) + '\n' for row in rows)
+        log.write_text(original, encoding='utf-8')
+        _save(state_path(self.config), {'job_id': 'cover-recovery', 'status': 'failed', 'outcome': 'partial',
+                                        'issue_count': 3, 'retryable_asset_ids': [1, 2, 3], 'notes': {}})
+        with patch('peach.web_library_processing.settings_file.active', return_value=self.config):
+            pending = q_library_processing(contract, {})
+            self.assertEqual(pending['issue_count'], 2)
+            self.assertEqual(pending['retryable_asset_ids'], [2, 3])
+            self.assertEqual(q_library_processing_issues(contract, {'job_id': 'cover-recovery'})['rows'], rows)
+        self.assertEqual(log.read_text(encoding='utf-8'), original)
+
     def test_cancelled_recovery_is_not_replayed_after_the_writer_exits(self):
         from peach.task_runs import TaskRunStore
         store = TaskRunStore(self.db)
