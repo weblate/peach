@@ -46,6 +46,7 @@ Entries are written for users to scan: one sentence each, saying where something
 
 ### Fixed / 修复
 
+- **Library**: Restore qBittorrent login on newer versions and read Windows download paths reported by the client (#894). / **馆藏**：修复新版 qBittorrent 的登录兼容性，并支持客户端上报的 Windows 下载路径（#894）。
 - **Interface**: Keep text and counts legible over translucent navigation, filter, and cover controls. / **界面**：提高侧栏、筛选栏和封面浮层上文字与计数的对比度，选中底色保留原背景色。
 - **Interface**: Keep the feedback title and close button visible while the form scrolls. / **界面**：滚动反馈表单时，标题和关闭按钮固定在顶部。
 - **Interface**: Keep filter controls in place while tags and counts load. / **界面**：标签和计数加载时，筛选控件留在原位。
